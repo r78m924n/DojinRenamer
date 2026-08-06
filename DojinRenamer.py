@@ -56,10 +56,17 @@ def get_dlsite_direct_thumb(cid):
 def download_image(url, save_path):
     if not url: return
     try:
-        r = requests.get(url, timeout=10)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=15)
         if r.status_code == 200:
             with open(save_path, "wb") as f:
                 f.write(r.content)
+            # 🌟 成功したことが一目でわかるようにログを追加
+            print(f"  🖼 画像保存完了: {os.path.basename(save_path)}")
+        else:
+            print(f"  ❌ 画像DL失敗: サーバーエラー (ステータスコード {r.status_code}) - {url}")
     except Exception as e:
         print(f"  ❌ 画像DL失敗: {e}")
 
@@ -173,14 +180,25 @@ def fetch_dlsite(driver, cid):
     m = re.search(r'[Vv]er\.?\s*([0-9]+(?:\.[0-9]+)*[a-zA-Z]?)', data["title"])
     if m: data["version"] = f"Ver{m.group(1)}"
 
+	# ==========================================
+    # 🌟 サムネイル取得（OGPメタタグ対応版）
+    # ==========================================
     try:
-        thumb_elem = driver.find_element(By.CSS_SELECTOR, ".product-slider-data div[data-src]")
-        thumb_url = thumb_elem.get_attribute("data-src")
-        if thumb_url.startswith("//"): thumb_url = "https:" + thumb_url
-        data["thumb"] = thumb_url
-    except: 
-        data["thumb"] = get_dlsite_direct_thumb(cid)
+        # 最優先: OGPタグ（共有用メタタグ）から取得。webp等にも確実に対応
+        og_image = driver.find_element(By.CSS_SELECTOR, 'meta[property="og:image"]')
+        data["thumb"] = og_image.get_attribute("content")
+    except:
+        try:
+            # 予備: 従来のDOMからの取得
+            thumb_elem = driver.find_element(By.CSS_SELECTOR, ".product-slider-data div[data-src]")
+            thumb_url = thumb_elem.get_attribute("data-src")
+            if thumb_url.startswith("//"): thumb_url = "https:" + thumb_url
+            data["thumb"] = thumb_url
+        except: 
+            # 最終手段: URL直接生成
+            data["thumb"] = get_dlsite_direct_thumb(cid)
 
+    return data
     return data
 
 def get_metadata(driver, cid):
@@ -321,16 +339,11 @@ def main():
                 download_image(thumb_url, img_path)
 
 	# ==========================================
-    # 🌟 2. ファイル/既存フォルダ -> リネーム処理
+    # 🌟 【修正後】2. ファイル/既存フォルダ -> リネーム処理
     # ==========================================
     for item, cid in file_targets:
         if cid in data_map:
             src = os.path.join(base_dir, item)
-            
-            # 万が一他の処理でファイルが移動・削除されていたらスキップ
-            if not os.path.exists(src):
-                continue
-                
             is_dir = os.path.isdir(src) # フォルダかどうかを判定
 
             base_name = build_base_name(data_map[cid])
@@ -344,15 +357,7 @@ def main():
             
             dst = os.path.join(base_dir, new_filename)
             
-            # 💡 【修正ポイント】画像ダウンロードをスキップ判定の「前」に移動！
-            # リネーム不要な完璧な名前のフォルダでも、画像がなければしっかり取得します。
-            thumb_url = data_map[cid].get("thumb")
-            if thumb_url:
-                img_path = os.path.join(base_dir, base_name + ".jpg")
-                if not os.path.exists(img_path): # 画像がまだ存在しない場合のみ保存
-                    download_image(thumb_url, img_path)
-            
-            # 既に完璧な名前にリネーム済みの場合はここでスキップ
+            # 既に完璧な名前にリネーム済みの場合はスキップ
             if src == dst:
                 continue
             
@@ -362,8 +367,15 @@ def main():
                     print(f"  📁 フォルダリネーム完了: {item} -> {new_filename}")
                 else:
                     print(f"  📝 ファイルリネーム完了: {item} -> {new_filename}")
+                
             except Exception as e:
                 print(f"  ❌ リネーム失敗 ({item}): {e}")
+
+            # サムネ保存
+            thumb_url = data_map[cid].get("thumb")
+            if thumb_url:
+                img_path = os.path.join(base_dir, base_name + ".jpg")
+                download_image(thumb_url, img_path)
 
     # ==========================================
     # 🌟 url.txt の更新（成功したCIDの削除）
