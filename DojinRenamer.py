@@ -335,6 +335,20 @@ def main():
             except Exception as e:
                 print(f"  ❌ リネーム失敗 ({file}): {e}")
 
+    # ==========================================
+    # 🌟 url.txt の更新（成功したCIDの削除）
+    # ==========================================
+    if os.path.exists(url_file) and url_cids:
+        # 取得成功(data_mapに存在する)していないCIDだけをリストに残す
+        remaining_cids = [cid for cid in url_cids if cid not in data_map]
+        
+        # 減っている場合のみ上書き保存を実行
+        if len(remaining_cids) < len(url_cids):
+            with open(url_file, "w", encoding="utf-8") as f:
+                for cid in remaining_cids:
+                    f.write(cid + "\n")
+            print(f"\n📝 url.txt を更新しました（成功した {len(url_cids) - len(remaining_cids)} 件を削除しました）")
+
     print("\n🏁 全ての処理が完了しました！")
     input("Enterキーを押すと画面を閉じます...")
 
