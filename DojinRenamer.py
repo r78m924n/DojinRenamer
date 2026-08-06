@@ -229,20 +229,27 @@ def main():
         with open(url_file, encoding="utf-8") as f:
             url_cids = [line.strip() for line in f if line.strip()]
 
-    # url.txt以外のファイルをリストアップ
-    files = [f for f in os.listdir(base_dir) if os.path.isfile(os.path.join(base_dir, f)) and f != "url.txt"]
+	# 【修正前】
+    # files = [f for f in os.listdir(base_dir) if os.path.isfile(os.path.join(base_dir, f)) and f != "url.txt"]
+    # ...
+    # for file in files:
+
+    # ==========================================
+    # 🌟 【修正後】ファイルもフォルダも両方拾う
+    # ==========================================
+    items = [f for f in os.listdir(base_dir) if f != "url.txt"]
 
     # 処理対象の全CIDを抽出
     target_cids = set(url_cids)
-    file_targets = [] # (ファイル名, CID) のリスト
+    file_targets = [] # (元の名前, CID) のリスト
 
-    for file in files:
-        # RJだけでなくVJも検知するように変更
-        m = re.search(r'(d_\d+|RJ\d+|VJ\d+)', file, flags=re.IGNORECASE)
+    for item in items:
+        # RJ, VJ, d_ を含む名前ならファイルでもフォルダでも検知
+        m = re.search(r'(d_\d+|RJ\d+|VJ\d+)', item, flags=re.IGNORECASE)
         if m:
             cid = m.group(1)
             target_cids.add(cid)
-            file_targets.append((file, cid))
+            file_targets.append((item, cid))
 
     if not target_cids:
         print("📁 処理対象のCIDやファイルが見つかりません。")
@@ -313,27 +320,50 @@ def main():
                 img_path = os.path.join(base_dir, base_name + ".jpg")
                 download_image(thumb_url, img_path)
 
-    # 2. ファイル由来 -> リネーム処理 (拡張子を維持)
-    for file, cid in file_targets:
+	# ==========================================
+    # 🌟 2. ファイル/既存フォルダ -> リネーム処理
+    # ==========================================
+    for item, cid in file_targets:
         if cid in data_map:
-            ext = os.path.splitext(file)[1] # 元の拡張子（.zipなど）を取得
-            base_name = build_base_name(data_map[cid])
-            new_filename = base_name + ext
+            src = os.path.join(base_dir, item)
             
-            src = os.path.join(base_dir, file)
+            # 万が一他の処理でファイルが移動・削除されていたらスキップ
+            if not os.path.exists(src):
+                continue
+                
+            is_dir = os.path.isdir(src) # フォルダかどうかを判定
+
+            base_name = build_base_name(data_map[cid])
+            
+            # フォルダなら拡張子なし、ファイルなら元の拡張子を引き継ぐ
+            if is_dir:
+                new_filename = base_name
+            else:
+                ext = os.path.splitext(item)[1]
+                new_filename = base_name + ext
+            
             dst = os.path.join(base_dir, new_filename)
+            
+            # 💡 【修正ポイント】画像ダウンロードをスキップ判定の「前」に移動！
+            # リネーム不要な完璧な名前のフォルダでも、画像がなければしっかり取得します。
+            thumb_url = data_map[cid].get("thumb")
+            if thumb_url:
+                img_path = os.path.join(base_dir, base_name + ".jpg")
+                if not os.path.exists(img_path): # 画像がまだ存在しない場合のみ保存
+                    download_image(thumb_url, img_path)
+            
+            # 既に完璧な名前にリネーム済みの場合はここでスキップ
+            if src == dst:
+                continue
             
             try:
                 os.rename(src, dst)
-                print(f"  📝 リネーム完了: {file} -> {new_filename}")
-                
-                # サムネ保存（ファイルと同じ名前にする）
-                thumb_url = data_map[cid].get("thumb")
-                if thumb_url:
-                    img_path = os.path.join(base_dir, base_name + ".jpg")
-                    download_image(thumb_url, img_path)
+                if is_dir:
+                    print(f"  📁 フォルダリネーム完了: {item} -> {new_filename}")
+                else:
+                    print(f"  📝 ファイルリネーム完了: {item} -> {new_filename}")
             except Exception as e:
-                print(f"  ❌ リネーム失敗 ({file}): {e}")
+                print(f"  ❌ リネーム失敗 ({item}): {e}")
 
     # ==========================================
     # 🌟 url.txt の更新（成功したCIDの削除）
