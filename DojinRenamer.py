@@ -319,7 +319,7 @@ def main():
     driver.quit()
     print("\n✅ スクレイピング完了。ブラウザを閉じました。")
 
-    # ==========================================
+# ==========================================
     # 🌟 ファイル/フォルダのローカル操作
     # ==========================================
     print("\n📦 フォルダ作成・ファイルリネームを開始します...")
@@ -332,23 +332,26 @@ def main():
             os.makedirs(folder_path, exist_ok=True)
             print(f"  📁 フォルダ作成: {base_name}")
             
-            # サムネ保存
+            # サムネ保存 (.webp対応)
             thumb_url = data_map[cid].get("thumb")
             if thumb_url:
-                img_path = os.path.join(base_dir, base_name + ".jpg")
-                download_image(thumb_url, img_path)
+                img_ext = ".webp" if ".webp" in thumb_url.lower() else ".jpg"
+                img_path = os.path.join(base_dir, base_name + img_ext)
+                if not os.path.exists(img_path):
+                    download_image(thumb_url, img_path)
 
-	# ==========================================
-    # 🌟 【修正後】2. ファイル/既存フォルダ -> リネーム処理
-    # ==========================================
+    # 2. ファイル/既存フォルダ -> リネーム処理
     for item, cid in file_targets:
         if cid in data_map:
             src = os.path.join(base_dir, item)
-            is_dir = os.path.isdir(src) # フォルダかどうかを判定
+            
+            if not os.path.exists(src):
+                continue
+                
+            is_dir = os.path.isdir(src)
 
             base_name = build_base_name(data_map[cid])
             
-            # フォルダなら拡張子なし、ファイルなら元の拡張子を引き継ぐ
             if is_dir:
                 new_filename = base_name
             else:
@@ -356,6 +359,14 @@ def main():
                 new_filename = base_name + ext
             
             dst = os.path.join(base_dir, new_filename)
+            
+            # 💡 サムネ保存 (.webp対応)
+            thumb_url = data_map[cid].get("thumb")
+            if thumb_url:
+                img_ext = ".webp" if ".webp" in thumb_url.lower() else ".jpg"
+                img_path = os.path.join(base_dir, base_name + img_ext)
+                if not os.path.exists(img_path):
+                    download_image(thumb_url, img_path)
             
             # 既に完璧な名前にリネーム済みの場合はスキップ
             if src == dst:
@@ -367,15 +378,8 @@ def main():
                     print(f"  📁 フォルダリネーム完了: {item} -> {new_filename}")
                 else:
                     print(f"  📝 ファイルリネーム完了: {item} -> {new_filename}")
-                
             except Exception as e:
                 print(f"  ❌ リネーム失敗 ({item}): {e}")
-
-            # サムネ保存
-            thumb_url = data_map[cid].get("thumb")
-            if thumb_url:
-                img_path = os.path.join(base_dir, base_name + ".jpg")
-                download_image(thumb_url, img_path)
 
     # ==========================================
     # 🌟 url.txt の更新（成功したCIDの削除）
