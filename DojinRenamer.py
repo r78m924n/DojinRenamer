@@ -213,24 +213,27 @@ def get_metadata(driver, cid):
 # ==========================================
 # 3. フォルダ/ファイル名生成ロジック
 # ==========================================
-def build_base_name(data):
+def build_base_name(data, include_version=True):
     """拡張子抜きのベースとなるファイル/フォルダ名を生成"""
     clean_circle = sanitize_filename(data.get("circle", ""))
     clean_title_str = clean_title(sanitize_filename(data.get("title", "")))
     fmt = data.get("format", "")
     rel_date = format_date(data.get("release_date", ""))
     
-    ver_suffix = data.get("version", "")
-    if not ver_suffix and data.get("update_date"):
-        up_date = format_date(data.get("update_date", ""))
-        if up_date:
-            ver_suffix = f"Update_{up_date}"
-
     name = f"[{clean_circle}][{data['cid']}]"
     if fmt: name += f"[{fmt}]"
     if rel_date: name += f"[{rel_date}]"
     name += f" {clean_title_str}"
-    if ver_suffix: name += f" {ver_suffix}"
+    
+    # 🌟 画像用の名前を生成する時は、このバージョン付与処理をスキップする
+    if include_version:
+        ver_suffix = data.get("version", "")
+        if not ver_suffix and data.get("update_date"):
+            up_date = format_date(data.get("update_date", ""))
+            if up_date:
+                ver_suffix = f"Update_{up_date}"
+        if ver_suffix:
+            name += f" {ver_suffix}"
     
     return sanitize_filename(name)
 
@@ -319,7 +322,7 @@ def main():
     driver.quit()
     print("\n✅ スクレイピング完了。ブラウザを閉じました。")
 
-# ==========================================
+    # ==========================================
     # 🌟 ファイル/フォルダのローカル操作
     # ==========================================
     print("\n📦 フォルダ作成・ファイルリネームを開始します...")
@@ -327,17 +330,25 @@ def main():
     # 1. url.txt由来のCID -> フォルダ作成
     for cid in url_cids:
         if cid in data_map:
-            base_name = build_base_name(data_map[cid])
+            # フォルダ名はバージョンあり、画像名はバージョンなしで生成
+            base_name = build_base_name(data_map[cid], include_version=True)
+            img_base_name = build_base_name(data_map[cid], include_version=False)
+            
             folder_path = os.path.join(base_dir, base_name)
             os.makedirs(folder_path, exist_ok=True)
             print(f"  📁 フォルダ作成: {base_name}")
             
-            # サムネ保存 (.webp対応)
+            # サムネ保存 (.webp対応 ＆ 重複防止)
             thumb_url = data_map[cid].get("thumb")
             if thumb_url:
                 img_ext = ".webp" if ".webp" in thumb_url.lower() else ".jpg"
-                img_path = os.path.join(base_dir, base_name + img_ext)
-                if not os.path.exists(img_path):
+                alt_ext = ".jpg" if img_ext == ".webp" else ".webp" # 新旧フォーマットの重複防止用
+                
+                img_path = os.path.join(base_dir, img_base_name + img_ext)
+                alt_path = os.path.join(base_dir, img_base_name + alt_ext)
+                
+                # 既にjpgかwebpのどちらかが存在していればDLしない
+                if not os.path.exists(img_path) and not os.path.exists(alt_path):
                     download_image(thumb_url, img_path)
 
     # 2. ファイル/既存フォルダ -> リネーム処理
@@ -350,7 +361,9 @@ def main():
                 
             is_dir = os.path.isdir(src)
 
-            base_name = build_base_name(data_map[cid])
+            # リネーム用と画像用で名前を分ける
+            base_name = build_base_name(data_map[cid], include_version=True)
+            img_base_name = build_base_name(data_map[cid], include_version=False)
             
             if is_dir:
                 new_filename = base_name
@@ -360,12 +373,16 @@ def main():
             
             dst = os.path.join(base_dir, new_filename)
             
-            # 💡 サムネ保存 (.webp対応)
+            # 💡 サムネ保存 (.webp対応 ＆ 重複防止)
             thumb_url = data_map[cid].get("thumb")
             if thumb_url:
                 img_ext = ".webp" if ".webp" in thumb_url.lower() else ".jpg"
-                img_path = os.path.join(base_dir, base_name + img_ext)
-                if not os.path.exists(img_path):
+                alt_ext = ".jpg" if img_ext == ".webp" else ".webp"
+                
+                img_path = os.path.join(base_dir, img_base_name + img_ext)
+                alt_path = os.path.join(base_dir, img_base_name + alt_ext)
+                
+                if not os.path.exists(img_path) and not os.path.exists(alt_path):
                     download_image(thumb_url, img_path)
             
             # 既に完璧な名前にリネーム済みの場合はスキップ
