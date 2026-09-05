@@ -31,3 +31,19 @@ FANZA（同人）および DLsite の作品ファイル（ZIPや動画など）�
     ├── d_123456.zip   # リネーム対象のファイル（FANZA）
     └── VJ123456.mp4   # リネーム対象のファイル（DLsite動画）
 
+## 🛠 環境構築 (Setup)
+
+このスクリプトを実行するには、いくつかの外部ライブラリが必要です。
+
+### 1. リポジトリのクローン（またはダウンロード）
+```bash
+git clone [あなたのリポジトリのURL]
+cd DojinRenamer
+
+Note:
+インストールされる主要なパッケージは以下の通りです。
+  * selenium: ブラウザの自動操作
+  * webdriver-manager: Chromeドライバーの自動管理
+  * requests: Webアクセス用
+
+  pip install selenium webdriver-manager requests
