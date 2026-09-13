@@ -144,8 +144,8 @@ def fetch_dlsite(driver, cid):
         except: pass
 
     if "error" in driver.current_url and "age" not in driver.current_url:
-        print(f"   -> 🔒 アクセス制限/404です。サムネイル直接取得に切り替えます。")
-        return {"cid": cid, "url": url, "circle": "不明", "title": "限定・販売終了作品", "format": "", "release_date": "", "update_date": "", "version": "", "thumb": get_dlsite_direct_thumb(cid)}
+        print("   -> 🔒 アクセス制限/404のため、作品情報を取得できません。")
+        return None
 
     data = {"cid": cid, "url": url, "circle": "", "title": "", "format": "", "release_date": "", "update_date": "", "version": "", "thumb": ""}
 
@@ -213,6 +213,15 @@ def get_metadata(driver, cid):
 # ==========================================
 # 3. フォルダ/ファイル名生成ロジック
 # ==========================================
+def has_required_metadata(data):
+    """実際の名前に使うタイトルとサークル名が取得できたか確認する。"""
+    return bool(
+        data
+        and sanitize_filename(data.get("circle", ""))
+        and clean_title(sanitize_filename(data.get("title", "")))
+    )
+
+
 def build_base_name(data, include_version=True):
     """拡張子抜きのベースとなるファイル/フォルダ名を生成"""
     clean_circle = sanitize_filename(data.get("circle", ""))
@@ -314,9 +323,11 @@ def main():
     data_map = {}
     for cid in target_cids:
         data = get_metadata(driver, cid)
-        if data:
+        if has_required_metadata(data):
             data_map[cid] = data
             print("  ✅ 取得完了")
+        else:
+            print(f"  ⚠ {cid}: 作品情報が不足しているためスキップします（既存の名前は保持）。")
 
     # 全て取り終わったのでブラウザは閉じてOK
     driver.quit()
