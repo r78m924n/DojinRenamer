@@ -25,7 +25,7 @@ FANZA（同人）および DLsite の作品ファイル（ZIPや動画など）�
 
 ```text
 .
-├── renamer.py         # 本スクリプト
+├── DojinRenamer.py    # 本スクリプト
 └── targets/           # 処理対象を入れるフォルダ（自動作成されます）
     ├── url.txt        # (任意) CIDを改行区切りで羅列したテキストファイル
     ├── d_123456.zip   # リネーム対象のファイル（FANZA）
