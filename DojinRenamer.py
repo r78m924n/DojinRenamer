@@ -1,4 +1,5 @@
 import os
+import csv
 import re
 import time
 import math
@@ -222,6 +223,27 @@ def has_required_metadata(data):
     )
 
 
+def load_failures(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return {row["cid"].upper(): row for row in csv.DictReader(f)}
+
+
+def save_failures(path, failures):
+    """置き換えに成功するまで既存のエラーリストを保持する。"""
+    temporary = path + ".tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["cid", "reason"])
+            writer.writeheader()
+            writer.writerows(failures.values())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
 def build_base_name(data, include_version=True):
     """拡張子抜きのベースとなるファイル/フォルダ名を生成"""
     clean_circle = sanitize_filename(data.get("circle", ""))
@@ -253,6 +275,8 @@ def main():
     base_dir = "targets"
     os.makedirs(base_dir, exist_ok=True)
     url_file = os.path.join(base_dir, "url.txt")
+    failure_file = os.path.join(base_dir, "failed.csv")
+    failures = load_failures(failure_file)
 
     url_cids = []
     if os.path.exists(url_file):
@@ -267,10 +291,11 @@ def main():
     # ==========================================
     # 🌟 【修正後】ファイルもフォルダも両方拾う
     # ==========================================
-    items = [f for f in os.listdir(base_dir) if f != "url.txt"]
+    items = [f for f in os.listdir(base_dir) if f not in {"url.txt", "failed.csv", "failed.csv.tmp"}]
 
     # 処理対象の全CIDを抽出
     target_cids = set(url_cids)
+    retry_cids = {cid.upper() for cid in url_cids}
     file_targets = [] # (元の名前, CID) のリスト
 
     for item in items:
@@ -278,6 +303,8 @@ def main():
         m = re.search(r'(d_\d+|RJ\d+|VJ\d+)', item, flags=re.IGNORECASE)
         if m:
             cid = m.group(1)
+            if cid.upper() in failures and cid.upper() not in retry_cids:
+                continue
             target_cids.add(cid)
             file_targets.append((item, cid))
 
@@ -321,17 +348,31 @@ def main():
     # --- 情報収集ループ ---
     print("\n🚀 情報取得を開始します...")
     data_map = {}
+    failed_cids = set()
     for cid in target_cids:
-        data = get_metadata(driver, cid)
+        reason = "タイトルまたはサークル名を取得できませんでした（アクセス制限・情報欠落など）"
+        try:
+            data = get_metadata(driver, cid)
+        except Exception as e:
+            data = None
+            reason = f"{type(e).__name__}: {e}"
         if has_required_metadata(data):
             data_map[cid] = data
+            failures.pop(cid.upper(), None)
             print("  ✅ 取得完了")
         else:
+            failed_cids.add(cid)
+            failures[cid.upper()] = {"cid": cid, "reason": reason}
             print(f"  ⚠ {cid}: 作品情報が不足しているためスキップします（既存の名前は保持）。")
 
     # 全て取り終わったのでブラウザは閉じてOK
     driver.quit()
     print("\n✅ スクレイピング完了。ブラウザを閉じました。")
+    try:
+        save_failures(failure_file, failures)
+    except OSError as e:
+        print(f"❌ failed.csv の保存に失敗しました。url.txt を保持して終了します: {e}")
+        return
 
     # ==========================================
     # 🌟 ファイル/フォルダのローカル操作
@@ -413,15 +454,15 @@ def main():
     # 🌟 url.txt の更新（成功したCIDの削除）
     # ==========================================
     if os.path.exists(url_file) and url_cids:
-        # 取得成功(data_mapに存在する)していないCIDだけをリストに残す
-        remaining_cids = [cid for cid in url_cids if cid not in data_map]
+        # 失敗したIDも、エラーリストへの保存後に処理対象から取り除く。
+        remaining_cids = [cid for cid in url_cids if cid not in data_map and cid not in failed_cids]
         
         # 減っている場合のみ上書き保存を実行
         if len(remaining_cids) < len(url_cids):
             with open(url_file, "w", encoding="utf-8") as f:
                 for cid in remaining_cids:
                     f.write(cid + "\n")
-            print(f"\n📝 url.txt を更新しました（成功した {len(url_cids) - len(remaining_cids)} 件を削除しました）")
+            print(f"\n📝 url.txt を更新しました（処理済み {len(url_cids) - len(remaining_cids)} 件を削除しました。取得失敗は failed.csv を確認してください）")
 
     print("\n🏁 全ての処理が完了しました！")
     input("Enterキーを押すと画面を閉じます...")

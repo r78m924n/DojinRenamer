@@ -22,7 +22,7 @@ class MetadataSafetyTests(unittest.TestCase):
             app.main()
             return download
 
-    def test_failed_pages_preserve_files_folders_and_queue(self):
+    def test_failed_pages_preserve_names_and_move_queue_to_failures(self):
         for cid, page_url in (
             ("d_123456", "https://www.dmm.co.jp/age_check/"),
             ("RJ123456", "https://www.dlsite.com/maniax/work/=/product_id/RJ123456.html"),
@@ -58,10 +58,27 @@ class MetadataSafetyTests(unittest.TestCase):
                     download = self.run_main(driver)
                     self.assertEqual(original_file.read_bytes(), b"archive")
                     self.assertEqual((original_folder / "content.txt").read_bytes(), b"content")
-                    self.assertEqual(queue.read_text(encoding="utf-8"), cid + "\n")
-                    self.assertEqual(len(list(targets.iterdir())), 3)
+                    self.assertEqual(queue.read_text(encoding="utf-8"), "")
+                    failures = app.load_failures(str(targets / "failed.csv"))
+                    self.assertEqual(list(failures), [cid.upper()])
+                    self.assertTrue(failures[cid.upper()]["reason"])
+                    self.assertEqual(len(list(targets.iterdir())), 4)
                     download.assert_not_called()
                     driver.quit.assert_called_once()
+                    driver.reset_mock()
+                    self.run_main(driver)
+                    driver.get.assert_not_called()
+                    # Explicitly queueing the CID retries it without adding duplicate rows.
+                    queue.write_text(cid + "\n", encoding="utf-8")
+                    self.run_main(driver)
+                    self.assertTrue(driver.get.called)
+                    self.assertEqual(len(app.load_failures(str(targets / "failed.csv"))), 1)
+                    # A failure to persist the error must leave the input queue intact.
+                    queue.write_text(cid + "\n", encoding="utf-8")
+                    with patch.object(app.os, "replace", side_effect=OSError("disk full")):
+                        self.run_main(driver)
+                    self.assertEqual(queue.read_text(encoding="utf-8"), cid + "\n")
+                    self.assertEqual(app.load_failures(str(targets / "failed.csv")), failures)
 
     def test_required_fields_are_checked_after_name_cleanup(self):
         for data in (None, {}, {"title": "Title"}, {"circle": "Circle"},
