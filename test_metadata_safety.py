@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, chdir
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +9,49 @@ import DojinRenamer as app
 
 
 class MetadataSafetyTests(unittest.TestCase):
+    def test_results_are_saved_before_browser_shutdown_failure(self):
+        for success in (False, True):
+            with self.subTest(success=success), tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+                targets = Path("targets")
+                targets.mkdir()
+                queue = targets / "url.txt"
+                queue.write_text("d_123456\n", encoding="utf-8")
+                driver = MagicMock()
+                data = {"cid": "d_123456", "circle": "Circle", "title": "Title"}
+                saved_at_quit = {}
+
+                def broken_quit():
+                    saved_at_quit["queue"] = queue.read_text(encoding="utf-8")
+                    saved_at_quit["failures"] = app.load_failures("targets/failed.csv")
+                    saved_at_quit["folder"] = (targets / "[Circle][d_123456] Title").is_dir()
+                    raise ConnectionResetError("driver disconnected during quit")
+
+                driver.quit.side_effect = broken_quit
+                with patch.object(app, "get_metadata", return_value=data,
+                                  side_effect=None if success else ConnectionResetError("driver disconnected")):
+                    self.run_main(driver)
+                driver.quit.assert_called_once()
+                driver.set_page_load_timeout.assert_called_once_with(30)
+                self.assertEqual(saved_at_quit["queue"], "")
+                if success:
+                    self.assertEqual(saved_at_quit["failures"], {})
+                    self.assertTrue(saved_at_quit["folder"])
+                else:
+                    self.assertIn("ConnectionResetError", saved_at_quit["failures"]["D_123456"]["reason"])
+
+    def test_navigation_logs_destination_and_propagates_errors(self):
+        driver = MagicMock()
+        driver.current_url = "https://example.test/redirected"
+        with patch("builtins.print") as output:
+            app.open_product_page(driver, "https://example.test/product")
+        messages = "\n".join(str(call.args[0]) for call in output.call_args_list)
+        self.assertIn("https://example.test/product", messages)
+        self.assertIn("https://example.test/redirected", messages)
+        driver.get.side_effect = TimeoutError("page load timed out")
+        with patch("builtins.print") as output, self.assertRaises(TimeoutError):
+            app.open_product_page(driver, "https://example.test/product")
+        self.assertEqual(output.call_count, 1)
+
     def run_main(self, driver):
         with ExitStack() as stack:
             stack.enter_context(patch.object(app.webdriver, "Chrome", return_value=driver))
