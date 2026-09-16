@@ -14,7 +14,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 PAGE_LOAD_TIMEOUT = 30
 
 
@@ -318,17 +318,21 @@ def main():
     items = [f for f in os.listdir(base_dir) if f not in {"url.txt", "failed.csv", "failed.csv.tmp"}]
 
     # 処理対象の全CIDを抽出
-    target_cids = set(url_cids)
-    retry_cids = {cid.upper() for cid in url_cids}
+    # エラー履歴は除外リストではなく、次回起動時の再試行元として扱う。
+    # サイトごとの表記を統一し、履歴・入力・ファイル間の重複アクセスを防ぐ。
+    def normalize_cid(cid):
+        return cid.upper() if cid.upper().startswith(("RJ", "VJ")) else cid.lower()
+
+    url_cids = list(dict.fromkeys(normalize_cid(cid) for cid in url_cids))
+    retry_cids = {normalize_cid(row["cid"]) for row in failures.values()}
+    target_cids = set(url_cids) | retry_cids
     file_targets = [] # (元の名前, CID) のリスト
 
     for item in items:
         # RJ, VJ, d_ を含む名前ならファイルでもフォルダでも検知
         m = re.search(r'(d_\d+|RJ\d+|VJ\d+)', item, flags=re.IGNORECASE)
         if m:
-            cid = m.group(1)
-            if cid.upper() in failures and cid.upper() not in retry_cids:
-                continue
+            cid = normalize_cid(m.group(1))
             target_cids.add(cid)
             file_targets.append((item, cid))
 
@@ -404,8 +408,11 @@ def main():
     # ==========================================
     print("\n📦 フォルダ作成・ファイルリネームを開始します...")
 
-    # 1. url.txt由来のCID -> フォルダ作成
-    for cid in url_cids:
+    # 履歴だけに残っているIDも、成功時はフォルダ作成まで再開する。
+    file_cids = {cid for _, cid in file_targets}
+    folder_cids = set(url_cids) | (retry_cids - file_cids)
+    # 1. url.txtおよびファイルのない再試行ID -> フォルダ作成
+    for cid in folder_cids:
         if cid in data_map:
             # フォルダ名はバージョンあり、画像名はバージョンなしで生成
             base_name = build_base_name(data_map[cid], include_version=True)

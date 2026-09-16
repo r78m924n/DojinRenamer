@@ -9,6 +9,40 @@ import DojinRenamer as app
 
 
 class MetadataSafetyTests(unittest.TestCase):
+    def test_queue_only_failure_is_retried_and_recovers_on_next_run(self):
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            Path("targets").mkdir()
+            queue = Path("targets/url.txt")
+            queue.write_text("d_123456\n", encoding="utf-8")
+            driver = MagicMock()
+            with patch.object(app, "get_metadata", side_effect=TimeoutError("temporary timeout")) as fetch:
+                self.run_main(driver)
+                fetch.assert_called_once_with(driver, "d_123456")
+            self.assertEqual(queue.read_text(encoding="utf-8"), "")
+            self.assertIn("TimeoutError", app.load_failures("targets/failed.csv")["D_123456"]["reason"])
+            data = {"cid": "d_123456", "circle": "Circle", "title": "Title"}
+            with patch.object(app, "get_metadata", return_value=data) as fetch:
+                self.run_main(driver)
+                fetch.assert_called_once_with(driver, "d_123456")
+            self.assertEqual(app.load_failures("targets/failed.csv"), {})
+            self.assertTrue(Path("targets/[Circle][d_123456] Title").is_dir())
+
+    def test_legacy_failure_and_existing_file_are_retried_once(self):
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            Path("targets").mkdir()
+            Path("targets/D_123456.zip").write_bytes(b"archive")
+            # Existing two-column records must work without migration or url.txt.
+            Path("targets/failed.csv").write_text(
+                "cid,reason\nd_123456,old failure\n", encoding="utf-8"
+            )
+            driver = MagicMock()
+            data = {"cid": "d_123456", "circle": "Circle", "title": "Title"}
+            with patch.object(app, "get_metadata", return_value=data) as fetch:
+                self.run_main(driver)
+                fetch.assert_called_once_with(driver, "d_123456")
+            self.assertEqual(Path("targets/[Circle][d_123456] Title.zip").read_bytes(), b"archive")
+            self.assertEqual(app.load_failures("targets/failed.csv"), {})
+
     def test_results_are_saved_before_browser_shutdown_failure(self):
         for success in (False, True):
             with self.subTest(success=success), tempfile.TemporaryDirectory() as tmp, chdir(tmp):
@@ -110,7 +144,7 @@ class MetadataSafetyTests(unittest.TestCase):
                     driver.quit.assert_called_once()
                     driver.reset_mock()
                     self.run_main(driver)
-                    driver.get.assert_not_called()
+                    self.assertTrue(driver.get.called)
                     # Explicitly queueing the CID retries it without adding duplicate rows.
                     queue.write_text(cid + "\n", encoding="utf-8")
                     self.run_main(driver)
