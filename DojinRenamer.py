@@ -14,6 +14,25 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+__version__ = "1.1.0"
+PAGE_LOAD_TIMEOUT = 30
+
+
+def open_product_page(driver, url):
+    print(f"  → 商品ページ移動開始: {url}", flush=True)
+    driver.get(url)
+    print(f"  → 商品ページ移動完了: {driver.current_url}", flush=True)
+
+
+def close_browser(driver):
+    print("ブラウザ終了処理を開始します...", flush=True)
+    try:
+        driver.quit()
+    except Exception as e:
+        print(f"⚠ ブラウザ終了失敗: {type(e).__name__}: {e}", flush=True)
+    else:
+        print("ブラウザを閉じました。", flush=True)
+
 # ==========================================
 # 1. ユーティリティ
 # ==========================================
@@ -91,15 +110,17 @@ def save_cookies(driver):
 def fetch_fanza(driver, cid):
     print(f"🌐 FETCH FANZA: {cid}")
     url = f"https://www.dmm.co.jp/dc/doujin/-/detail/=/cid={cid}/"
-    driver.get(url)
+    open_product_page(driver, url)
     time.sleep(2)
 
     data = {"cid": cid, "url": url, "circle": "", "title": "", "format": "", "release_date": "", "update_date": "", "version": "", "thumb": ""}
 
     try: data["title"] = driver.find_element(By.TAG_NAME, "h1").text
-    except: pass
+    except Exception as e:
+        print(f"  ⚠ タイトル取得失敗: {type(e).__name__}: {e}", flush=True)
     try: data["circle"] = driver.find_element(By.CSS_SELECTOR, ".circleName__txt").get_attribute("textContent").strip()
-    except: pass
+    except Exception as e:
+        print(f"  ⚠ サークル名取得失敗: {type(e).__name__}: {e}", flush=True)
     try: data["format"] = driver.find_element(By.CSS_SELECTOR, ".c_icon_productGenre").text.strip()
     except: pass
 
@@ -133,7 +154,7 @@ def fetch_fanza(driver, cid):
 def fetch_dlsite(driver, cid):
     print(f"🌐 FETCH DLsite: {cid}")
     url = f"https://www.dlsite.com/maniax/work/=/product_id/{cid}.html"
-    driver.get(url)
+    open_product_page(driver, url)
     time.sleep(2)
 
     # 年齢確認の再チェック（念のため）
@@ -151,9 +172,11 @@ def fetch_dlsite(driver, cid):
     data = {"cid": cid, "url": url, "circle": "", "title": "", "format": "", "release_date": "", "update_date": "", "version": "", "thumb": ""}
 
     try: data["title"] = driver.find_element(By.ID, "work_name").text
-    except: pass
+    except Exception as e:
+        print(f"  ⚠ タイトル取得失敗: {type(e).__name__}: {e}", flush=True)
     try: data["circle"] = driver.find_element(By.CSS_SELECTOR, ".maker_name a").text
-    except: pass
+    except Exception as e:
+        print(f"  ⚠ サークル名取得失敗: {type(e).__name__}: {e}", flush=True)
 
     # ID直撃で作品形式を取得
     try:
@@ -272,6 +295,7 @@ def build_base_name(data, include_version=True):
 # 4. メイン処理
 # ==========================================
 def main():
+    print(f"DojinRenamer v{__version__}", flush=True)
     base_dir = "targets"
     os.makedirs(base_dir, exist_ok=True)
     url_file = os.path.join(base_dir, "url.txt")
@@ -317,6 +341,7 @@ def main():
     options = webdriver.ChromeOptions()
     # options.add_argument("--headless=new")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
 
     needs_dlsite = any(c.upper().startswith("RJ") or c.upper().startswith("VJ") for c in target_cids)
     needs_fanza = any(c.startswith("d_") or re.match(r'^[a-z]+', c) for c in target_cids)
@@ -363,15 +388,15 @@ def main():
         else:
             failed_cids.add(cid)
             failures[cid.upper()] = {"cid": cid, "reason": reason}
-            print(f"  ⚠ {cid}: 作品情報が不足しているためスキップします（既存の名前は保持）。")
+            print(f"  ⚠ {cid}: {reason}（既存の名前は保持）。", flush=True)
 
-    # 全て取り終わったのでブラウザは閉じてOK
-    driver.quit()
-    print("\n✅ スクレイピング完了。ブラウザを閉じました。")
+    # 終了処理が応答しなくても失敗理由とローカル処理結果が残るよう、保存を先に行う。
+    print("\n✅ スクレイピング完了。取得結果を保存します。", flush=True)
     try:
         save_failures(failure_file, failures)
     except OSError as e:
         print(f"❌ failed.csv の保存に失敗しました。url.txt を保持して終了します: {e}")
+        close_browser(driver)
         return
 
     # ==========================================
@@ -464,6 +489,8 @@ def main():
                     f.write(cid + "\n")
             print(f"\n📝 url.txt を更新しました（処理済み {len(url_cids) - len(remaining_cids)} 件を削除しました。取得失敗は failed.csv を確認してください）")
 
+    print("\n✅ ローカル処理とリスト保存が完了しました。", flush=True)
+    close_browser(driver)
     print("\n🏁 全ての処理が完了しました！")
     input("Enterキーを押すと画面を閉じます...")
 
