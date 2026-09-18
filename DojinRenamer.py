@@ -6,6 +6,7 @@ import math
 import pickle
 import requests
 import shutil
+from urllib.parse import urlsplit
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -13,8 +14,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 PAGE_LOAD_TIMEOUT = 30
 
 
@@ -104,14 +106,96 @@ def save_cookies(driver):
     with open("cookies.pkl", "wb") as f:
         pickle.dump(driver.get_cookies(), f)
 
+
+FANZA_YES = (By.XPATH, "//a[contains(normalize-space(.),'はい')] | //button[contains(normalize-space(.),'はい')]")
+
+
+def fanza_age_page(driver):
+    url = driver.current_url.lower()
+    return "age_check" in url or "/age" in url or bool(fanza_yes_button(driver))
+
+
+def fanza_yes_button(driver):
+    return next((button for button in driver.find_elements(*FANZA_YES)
+                 if button.is_displayed() and button.is_enabled()), None)
+
+
+def wait_fanza_ready(driver):
+    # URLと読み込み状態が連続して安定するまで、遅延リダイレクトを待つ。
+    previous = None
+    stable = 0
+
+    def ready(browser):
+        nonlocal previous, stable
+        url = browser.current_url
+        if browser.execute_script("return document.readyState") != "complete" or fanza_age_page(browser):
+            stable = 0
+            previous = None
+            return False
+        stable = stable + 1 if url == previous else 0
+        previous = url
+        return stable >= 2
+
+    WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(ready)
+
+
+def confirm_fanza_age(driver):
+    if fanza_age_page(driver):
+        button = WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(fanza_yes_button)
+        print("  → FANZA年齢確認: はいをクリックします。", flush=True)
+        button.click()
+    wait_fanza_ready(driver)
+    try:
+        save_cookies(driver)
+    except OSError as e:
+        print(f"  ⚠ Cookie保存失敗: {e}", flush=True)
+
+
+def setup_fanza(driver):
+    driver.get("https://www.dmm.co.jp/")
+    if load_cookies(driver):
+        driver.refresh()
+    # Cookieファイルの存在を年齢確認完了の根拠にしない。
+    confirm_fanza_age(driver)
+
+
+def open_fanza_product(driver, url):
+    for attempt in range(2):
+        open_product_page(driver, url)
+        age_page = fanza_age_page(driver)
+        if age_page:
+            confirm_fanza_age(driver)
+        else:
+            wait_fanza_ready(driver)
+        actual = urlsplit(driver.current_url)
+        redirected = age_page or (
+            actual.hostname in {"www.fanza.jp", "www.dmm.co.jp", "fanza.jp", "dmm.co.jp"}
+            and actual.path.rstrip("/") in {"", "/top"}
+        )
+        if redirected:
+            if attempt == 0:
+                print("  → 年齢確認・トップ転送後のため、同じ商品を1回再取得します。", flush=True)
+                continue
+            raise RuntimeError(f"商品ページに到達できませんでした: {driver.current_url}")
+        # 固定秒数ではなく、作品名とサークル名が揃うまで待つ。
+        def product_ready(browser):
+            titles = browser.find_elements(By.TAG_NAME, "h1")
+            circles = browser.find_elements(By.CSS_SELECTOR, ".circleName__txt")
+            return (any(e.text.strip() for e in titles)
+                    and any((e.get_attribute("textContent") or "").strip() for e in circles))
+        try:
+            WebDriverWait(driver, PAGE_LOAD_TIMEOUT).until(product_ready)
+        except TimeoutException as e:
+            raise TimeoutException(f"作品情報の表示待ちがタイムアウトしました: {driver.current_url}") from e
+        return
+
 # ==========================================
 # 2. スクレイパー群
 # ==========================================
 def fetch_fanza(driver, cid):
     print(f"🌐 FETCH FANZA: {cid}")
     url = f"https://www.dmm.co.jp/dc/doujin/-/detail/=/cid={cid}/"
-    open_product_page(driver, url)
-    time.sleep(2)
+    open_fanza_product(driver, url)
 
     data = {"cid": cid, "url": url, "circle": "", "title": "", "format": "", "release_date": "", "update_date": "", "version": "", "thumb": ""}
 
@@ -362,17 +446,10 @@ def main():
         except: pass
 
     if needs_fanza:
-        driver.get("https://www.dmm.co.jp/")
-        time.sleep(2)
-        if load_cookies(driver):
-            driver.refresh()
-        else:
-            try:
-                btn = driver.find_element(By.XPATH, "//a[contains(text(),'はい')]")
-                btn.click()
-                time.sleep(2)
-                save_cookies(driver)
-            except: pass
+        try:
+            setup_fanza(driver)
+        except Exception as e:
+            print(f"  ⚠ FANZA初期化失敗: {type(e).__name__}: {e}。各商品で再確認します。", flush=True)
 
     # --- 情報収集ループ ---
     print("\n🚀 情報取得を開始します...")

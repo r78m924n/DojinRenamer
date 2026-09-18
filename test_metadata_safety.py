@@ -93,6 +93,8 @@ class MetadataSafetyTests(unittest.TestCase):
             stack.enter_context(patch.object(app, "Service"))
             stack.enter_context(patch.object(app.time, "sleep"))
             stack.enter_context(patch.object(app, "load_cookies", return_value=True))
+            stack.enter_context(patch.object(app, "save_cookies"))
+            stack.enter_context(patch.object(app, "WebDriverWait"))
             download = stack.enter_context(patch.object(app, "download_image"))
             stack.enter_context(patch("builtins.input", return_value=""))
             stack.enter_context(patch("builtins.print"))
